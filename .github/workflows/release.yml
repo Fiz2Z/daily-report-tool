@@ -51,9 +51,10 @@ jobs:
       - name: Generate SHA256
         shell: pwsh
         run: |
-          $exe = ".\dist\日报批量创建工具.exe"
+          Copy-Item ".\dist\日报批量创建工具.exe" ".\dist\report-tool.exe" -Force
+          $exe = ".\dist\report-tool.exe"
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          "sha256: $hash" | Set-Content ".\dist\日报批量创建工具.exe.sha256" -Encoding UTF8
+          "sha256: $hash" | Set-Content ".\dist\report-tool.exe.sha256" -Encoding UTF8
           @"
           自动打包版本：v$env:APP_VERSION
 
@@ -69,5 +70,5 @@ jobs:
           make_latest: true
           body_path: release_notes.md
           files: |
-            dist/日报批量创建工具.exe
-            dist/日报批量创建工具.exe.sha256
+            dist/report-tool.exe
+            dist/report-tool.exe.sha256

@@ -4,9 +4,11 @@ import html
 import json
 import os
 import queue
+import random
 import re
 import subprocess
 import sys
+import time
 import threading
 import tkinter as tk
 from html.parser import HTMLParser
@@ -21,7 +23,7 @@ DEFAULT_PROJECT_ID = "6"
 DEFAULT_TASK_TYPE = 4
 APP_VERSION = "1.0.0"
 GITHUB_UPDATE_REPO = "Fiz2Z/daily-report-tool"
-DEFAULT_UPDATE_ASSET_KEYWORD = "日报批量创建工具.exe"
+DEFAULT_UPDATE_ASSET_KEYWORD = "report-tool.exe"
 
 
 def resolve_app_dir():
@@ -97,6 +99,10 @@ def html_to_text(value):
 
 def today_string():
     return dt.date.today().strftime("%Y-%m-%d")
+
+
+def tomorrow_string():
+    return (dt.date.today() + dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def auto_count_for_date(date_text):
@@ -469,6 +475,8 @@ class DailyReportApp(tk.Tk):
         self.ui_queue = queue.Queue()
         self.current_step = 0
         self.step_frames = []
+        self.history_dialog = None
+        self.all_reports_dialog = None
         self.app_config = load_app_config()
 
         self.base_url_var = tk.StringVar(value=self.app_config["base_url"])
@@ -481,20 +489,21 @@ class DailyReportApp(tk.Tk):
         self.dept_name_var = tk.StringVar(value=self.app_config.get("dept_name", ""))
         self.post_names_var = tk.StringVar(value=self.app_config.get("post_names", ""))
         self.keyword_var = tk.StringVar()
-        self.date_var = tk.StringVar(value=today_string())
-        self.count_mode_var = tk.StringVar(value="auto")
-        self.manual_count_var = tk.IntVar(value=5)
+        self.date_var = tk.StringVar(value=tomorrow_string())
+        self.manual_count_var = tk.StringVar(value="5")
         self.assignee_var = tk.StringVar()
-        self.state_var = tk.StringVar(value="65 - 已完成")
+        self.state_var = tk.StringVar(value="67 - 打开")
         self.estimate_var = tk.DoubleVar(value=2.0)
         self.report_var = tk.DoubleVar(value=2.0)
+        self.interval_min_var = tk.IntVar(value=5)
+        self.interval_max_var = tk.IntVar(value=30)
         self.set_assignee_var = tk.BooleanVar(value=True)
         self.set_state_var = tk.BooleanVar(value=True)
         self.set_time_var = tk.BooleanVar(value=True)
         self.set_estimate_var = tk.BooleanVar(value=True)
         self.register_workload_var = tk.BooleanVar(value=True)
         self.continue_on_error_var = tk.BooleanVar(value=False)
-        for variable in (self.date_var, self.count_mode_var, self.manual_count_var, self.estimate_var, self.report_var):
+        for variable in (self.date_var, self.manual_count_var, self.estimate_var, self.report_var):
             variable.trace_add("write", self.on_preview_config_changed)
 
         self._configure_styles()
@@ -666,7 +675,12 @@ class DailyReportApp(tk.Tk):
         frame.columnconfigure(0, weight=1)
         self.step_frames.append(frame)
 
-        ttk.Label(frame, text="选择父级需求", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        header = ttk.Frame(frame, style="Panel.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="选择父级需求", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        self.current_user_label = ttk.Label(header, text=self.current_user_text(), style="Muted.Panel.TLabel")
+        self.current_user_label.grid(row=0, column=1, sticky="e")
         ttk.Label(frame, text="日报会作为该需求下的任务创建。", style="Muted.Panel.TLabel").grid(
             row=1, column=0, sticky="w", pady=(2, 14)
         )
@@ -676,7 +690,8 @@ class DailyReportApp(tk.Tk):
         search.columnconfigure(1, weight=1)
         ttk.Label(search, text="关键词", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Entry(search, textvariable=self.keyword_var).grid(row=0, column=1, sticky="ew", padx=8)
-        ttk.Button(search, text="刷新需求", command=self.load_requirements).grid(row=0, column=2)
+        ttk.Button(search, text="查询", command=self.load_requirements).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(search, text="刷新", command=self.refresh_requirements).grid(row=0, column=3)
 
         self.req_tree = ttk.Treeview(
             frame,
@@ -738,9 +753,15 @@ class DailyReportApp(tk.Tk):
         ttk.Label(left_card, text="条数", style="Panel.TLabel").grid(row=1, column=0, sticky="w", pady=(14, 0))
         count_row = ttk.Frame(left_card, style="Panel.TFrame")
         count_row.grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(14, 0))
-        ttk.Radiobutton(count_row, text="按星期自动", variable=self.count_mode_var, value="auto").pack(side=tk.LEFT)
-        ttk.Radiobutton(count_row, text="手动", variable=self.count_mode_var, value="manual").pack(side=tk.LEFT, padx=(14, 6))
-        ttk.Spinbox(count_row, from_=1, to=5, textvariable=self.manual_count_var, width=6).pack(side=tk.LEFT)
+        self.count_combo = ttk.Combobox(
+            count_row,
+            textvariable=self.manual_count_var,
+            values=("4", "5"),
+            state="readonly",
+            width=8,
+        )
+        self.count_combo.pack(side=tk.LEFT)
+        ttk.Label(count_row, text="条", style="Panel.TLabel").pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(left_card, text="负责人", style="Panel.TLabel").grid(row=2, column=0, sticky="w", pady=(14, 0))
         self.assignee_combo = ttk.Combobox(left_card, textvariable=self.assignee_var, values=[], state="normal")
@@ -765,30 +786,38 @@ class DailyReportApp(tk.Tk):
         ttk.Label(right_card, text="登记工时", style="Panel.TLabel").grid(row=1, column=0, sticky="w", pady=(14, 0))
         ttk.Entry(right_card, textvariable=self.report_var, width=12).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(14, 0))
 
-        ttk.Label(right_card, text="创建后自动设置", style="Panel.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(18, 8))
+        ttk.Label(right_card, text="随机创建间隔", style="Panel.TLabel").grid(row=2, column=0, sticky="w", pady=(14, 0))
+        interval_row = ttk.Frame(right_card, style="Panel.TFrame")
+        interval_row.grid(row=2, column=1, sticky="w", padx=(12, 0), pady=(14, 0))
+        ttk.Spinbox(interval_row, from_=0, to=3600, textvariable=self.interval_min_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(interval_row, text=" - ", style="Panel.TLabel").pack(side=tk.LEFT)
+        ttk.Spinbox(interval_row, from_=0, to=3600, textvariable=self.interval_max_var, width=6).pack(side=tk.LEFT)
+        ttk.Label(interval_row, text="秒", style="Panel.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(right_card, text="创建后自动设置", style="Panel.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 8))
         actions = ttk.Frame(right_card, style="Panel.TFrame")
-        actions.grid(row=3, column=0, columnspan=2, sticky="ew")
+        actions.grid(row=4, column=0, columnspan=2, sticky="ew")
         self.make_checkbutton(actions, "负责人", self.set_assignee_var).pack(side=tk.LEFT)
         self.make_checkbutton(actions, "时间", self.set_time_var).pack(side=tk.LEFT, padx=12)
         self.make_checkbutton(actions, "状态", self.set_state_var).pack(side=tk.LEFT)
         self.make_checkbutton(actions, "预估工时", self.set_estimate_var).pack(side=tk.LEFT, padx=12)
         self.make_checkbutton(actions, "登记工时", self.register_workload_var).pack(side=tk.LEFT)
 
-        ttk.Label(right_card, text="异常处理", style="Panel.TLabel").grid(row=4, column=0, columnspan=2, sticky="w", pady=(22, 8))
+        ttk.Label(right_card, text="异常处理", style="Panel.TLabel").grid(row=5, column=0, columnspan=2, sticky="w", pady=(22, 8))
         self.make_checkbutton(right_card, "某条失败后继续创建后续日报", self.continue_on_error_var).grid(
-            row=5, column=0, columnspan=2, sticky="w"
+            row=6, column=0, columnspan=2, sticky="w"
         )
 
         hint = ttk.LabelFrame(frame, text="时间规则", padding=16, style="Card.TLabelframe")
         hint.grid(row=3, column=0, sticky="ew", pady=(16, 0))
         ttk.Label(
             hint,
-            text="周一至周三：5 条，09:00-11:00 / 11:00-14:30 / 14:30-16:30 / 16:30-18:30 / 18:30-20:30",
+            text="5 条：09:00-11:00 / 11:00-14:30 / 14:30-16:30 / 16:30-18:30 / 18:30-20:30",
             style="Panel.TLabel",
         ).pack(anchor="w")
         ttk.Label(
             hint,
-            text="周四至周五：4 条，使用前四个时间段；周末请切换为手动条数。",
+            text="4 条：使用前四个时间段，截止到 18:30。日期默认明天，可手动修改。",
             style="Panel.TLabel",
         ).pack(anchor="w", pady=(6, 0))
 
@@ -923,6 +952,7 @@ class DailyReportApp(tk.Tk):
         if self.current_step == 1:
             try:
                 self.parse_count()
+                self.parse_interval_range()
                 if self.set_assignee_var.get():
                     self.parse_id(self.assignee_var.get(), "负责人")
                 if self.set_state_var.get():
@@ -1003,6 +1033,7 @@ class DailyReportApp(tk.Tk):
             self.dept_id_var.set(config.get("dept_id", ""))
             self.dept_name_var.set(config.get("dept_name", ""))
             self.post_names_var.set(config.get("post_names", ""))
+            self.update_current_user_label()
 
         def save_config_from_dialog():
             config = {key: value.get().strip() for key, value in values.items()}
@@ -1043,11 +1074,15 @@ class DailyReportApp(tk.Tk):
         dialog.wait_window()
 
     def open_history_dialog(self):
+        if self.focus_existing_dialog("history_dialog"):
+            return
         dialog = tk.Toplevel(self)
+        self.history_dialog = dialog
         dialog.title("历史日报记录")
         dialog.geometry("1050x620")
         dialog.transient(self)
         dialog.configure(bg=self.colors["bg"])
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self.close_tracked_dialog("history_dialog"))
 
         date_filter = tk.StringVar()
         keyword_filter = tk.StringVar()
@@ -1158,18 +1193,24 @@ class DailyReportApp(tk.Tk):
         refresh()
         self.center_dialog(dialog)
         dialog.wait_window()
+        if self.history_dialog is dialog:
+            self.history_dialog = None
 
     def open_all_reports_dialog(self):
+        if self.focus_existing_dialog("all_reports_dialog"):
+            return
         if not self.user_id_var.get().strip():
             self.show_centered_alert("无法查询", "请先在全局配置中点击“获取当前登录人”，保存后再查询全部日报。")
             return
 
         dialog = tk.Toplevel(self)
+        self.all_reports_dialog = dialog
         dialog.withdraw()
         dialog.title("全部日报")
         dialog.geometry("980x560")
         dialog.transient(self)
         dialog.configure(bg=self.colors["bg"])
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self.close_tracked_dialog("all_reports_dialog"))
 
         keyword_var = tk.StringVar()
         page_no_var = tk.IntVar(value=1)
@@ -1333,6 +1374,8 @@ class DailyReportApp(tk.Tk):
         dialog.lift()
         dialog.after(50, load_reports)
         dialog.wait_window()
+        if self.all_reports_dialog is dialog:
+            self.all_reports_dialog = None
 
     def ask_centered_confirmation(self, title, message, confirm_text="确认执行"):
         dialog = tk.Toplevel(self)
@@ -1414,6 +1457,42 @@ class DailyReportApp(tk.Tk):
         y = parent_y + max((parent_height - height) // 2, 0)
         dialog.geometry(f"+{x}+{y}")
 
+    def focus_existing_dialog(self, attr_name):
+        dialog = getattr(self, attr_name, None)
+        if dialog is None or not dialog.winfo_exists():
+            setattr(self, attr_name, None)
+            return False
+        dialog.deiconify()
+        dialog.lift()
+        dialog.focus_force()
+        return True
+
+    def close_tracked_dialog(self, attr_name):
+        dialog = getattr(self, attr_name, None)
+        setattr(self, attr_name, None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+
+    def current_user_text(self):
+        nickname = self.nickname_var.get().strip()
+        user_id = self.user_id_var.get().strip()
+        if nickname and user_id:
+            return f"当前登录人：{nickname}（ID: {user_id}）"
+        if nickname:
+            return f"当前登录人：{nickname}"
+        if user_id:
+            return f"当前登录人：ID {user_id}"
+        return "当前登录人：未获取"
+
+    def update_current_user_label(self):
+        label = getattr(self, "current_user_label", None)
+        if label is not None:
+            label.configure(text=self.current_user_text())
+
+    def refresh_requirements(self):
+        self.keyword_var.set("")
+        self.load_requirements()
+
     def client(self):
         self.api = ApiClient(
             self.base_url_var.get(),
@@ -1471,6 +1550,8 @@ class DailyReportApp(tk.Tk):
                     self.handle_update_checked(payload)
                 elif kind == "update_downloaded":
                     self.handle_update_downloaded(payload)
+                elif kind == "creation_finished":
+                    self.after_creation_finished()
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
@@ -1753,12 +1834,19 @@ del "%~f0" >nul 2>nul
     def parse_count(self):
         date_text = self.date_var.get().strip()
         dt.datetime.strptime(date_text, "%Y-%m-%d")
-        if self.count_mode_var.get() == "auto":
-            count = auto_count_for_date(date_text)
-            if count == 0:
-                raise ValueError("选择的日期是周末，自动模式不会生成日报；请切换为手动条数。")
-            return count
-        return int(self.manual_count_var.get())
+        count = int(self.manual_count_var.get())
+        if count not in (4, 5):
+            raise ValueError("日报条数只能选择 4 条或 5 条。")
+        return count
+
+    def parse_interval_range(self):
+        min_seconds = int(self.interval_min_var.get())
+        max_seconds = int(self.interval_max_var.get())
+        if min_seconds < 0 or max_seconds < 0:
+            raise ValueError("随机创建间隔不能小于 0 秒。")
+        if min_seconds > max_seconds:
+            raise ValueError("随机创建间隔的最小值不能大于最大值。")
+        return min_seconds, max_seconds
 
     def read_titles(self, count):
         raw = self.title_text.get("1.0", tk.END)
@@ -1836,6 +1924,13 @@ del "%~f0" >nul 2>nul
                 ),
             )
 
+    def after_creation_finished(self):
+        self.generated_rows = []
+        self.title_text.delete("1.0", tk.END)
+        self.fill_preview()
+        self.show_step(0)
+        self.append_log("已回到选择需求页面，可以继续准备下一次日报。")
+
     @staticmethod
     def parse_id(value, field_name):
         match = re.match(r"\s*(\d+)", value or "")
@@ -1870,6 +1965,7 @@ del "%~f0" >nul 2>nul
                 assignee_id = self.parse_id(self.assignee_var.get(), "负责人")
             if self.set_state_var.get():
                 state_id = self.parse_id(self.state_var.get(), "状态")
+            interval_min, interval_max = self.parse_interval_range()
         except Exception as exc:
             self.show_centered_alert("无法执行", str(exc))
             return
@@ -1890,6 +1986,8 @@ del "%~f0" >nul 2>nul
             "set_estimate": self.set_estimate_var.get(),
             "register_workload": self.register_workload_var.get(),
             "continue_on_error": self.continue_on_error_var.get(),
+            "interval_min": interval_min,
+            "interval_max": interval_max,
         }
 
         confirm_lines = [
@@ -1902,7 +2000,9 @@ del "%~f0" >nul 2>nul
             f"状态：{options['state_name'] if options['set_state'] else '不设置'}",
             f"预估工时：{rows[0]['estimate'] if rows else ''}",
             f"登记工时：{rows[0]['report'] if rows else ''}",
+            f"随机创建间隔：{interval_min} - {interval_max} 秒",
             "",
+            "创建过程中请不要关闭软件。",
             "是否确认执行？",
         ]
         if not self.ask_centered_confirmation("二次确认", "\n".join(confirm_lines)):
@@ -1981,8 +2081,15 @@ del "%~f0" >nul 2>nul
                     self.queue_log(f"[失败] {prefix}: {exc}")
                     if not options["continue_on_error"]:
                         raise
+                if index < len(rows):
+                    wait_seconds = random.randint(options["interval_min"], options["interval_max"])
+                    if wait_seconds > 0:
+                        self.queue_log(f"等待 {wait_seconds} 秒后创建下一条，请不要关闭软件。")
+                        time.sleep(wait_seconds)
             self.queue_log("全部处理完成")
+            self.ui_queue.put(("creation_finished", None))
 
+        self.append_log("创建任务已开始，创建过程中请不要关闭软件。")
         self.run_worker("执行创建", work)
 
 
