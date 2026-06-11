@@ -20,7 +20,7 @@ DEFAULT_TOKEN = ""
 DEFAULT_PROJECT_ID = "6"
 DEFAULT_TASK_TYPE = 4
 APP_VERSION = "1.0.0"
-DEFAULT_GITHUB_REPO = ""
+GITHUB_UPDATE_REPO = "Fiz2Z/daily-report-tool"
 DEFAULT_UPDATE_ASSET_KEYWORD = "日报批量创建工具.exe"
 
 
@@ -197,8 +197,6 @@ def default_config():
         "dept_id": "",
         "dept_name": "",
         "post_names": "",
-        "github_repo": DEFAULT_GITHUB_REPO,
-        "github_asset_keyword": DEFAULT_UPDATE_ASSET_KEYWORD,
     }
 
 
@@ -482,10 +480,6 @@ class DailyReportApp(tk.Tk):
         self.dept_id_var = tk.StringVar(value=self.app_config.get("dept_id", ""))
         self.dept_name_var = tk.StringVar(value=self.app_config.get("dept_name", ""))
         self.post_names_var = tk.StringVar(value=self.app_config.get("post_names", ""))
-        self.github_repo_var = tk.StringVar(value=self.app_config.get("github_repo", DEFAULT_GITHUB_REPO))
-        self.github_asset_var = tk.StringVar(
-            value=self.app_config.get("github_asset_keyword", DEFAULT_UPDATE_ASSET_KEYWORD)
-        )
         self.keyword_var = tk.StringVar()
         self.date_var = tk.StringVar(value=today_string())
         self.count_mode_var = tk.StringVar(value="auto")
@@ -958,8 +952,6 @@ class DailyReportApp(tk.Tk):
             "dept_id": tk.StringVar(value=self.dept_id_var.get()),
             "dept_name": tk.StringVar(value=self.dept_name_var.get()),
             "post_names": tk.StringVar(value=self.post_names_var.get()),
-            "github_repo": tk.StringVar(value=self.github_repo_var.get()),
-            "github_asset_keyword": tk.StringVar(value=self.github_asset_var.get()),
         }
 
         panel = ttk.Frame(dialog, padding=18, style="Panel.TFrame")
@@ -983,24 +975,8 @@ class DailyReportApp(tk.Tk):
                 row=row_index, column=1, sticky="ew", padx=(10, 0), pady=6
             )
 
-        update_box = ttk.LabelFrame(panel, text="GitHub 更新配置", padding=12, style="Card.TLabelframe")
-        update_box.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        update_box.columnconfigure(1, weight=1)
-        update_rows = [
-            ("仓库", "github_repo", "例如 owner/repo，留空则不启用检查更新"),
-            ("EXE 关键词", "github_asset_keyword", "用于从 Release 附件中匹配要下载的 exe"),
-        ]
-        for row_index, (label, key, hint) in enumerate(update_rows):
-            ttk.Label(update_box, text=label, style="Panel.TLabel").grid(row=row_index, column=0, sticky="w", pady=4)
-            ttk.Entry(update_box, textvariable=values[key]).grid(
-                row=row_index, column=1, sticky="ew", padx=(10, 0), pady=4
-            )
-            ttk.Label(update_box, text=hint, style="Muted.Panel.TLabel").grid(
-                row=row_index, column=2, sticky="w", padx=(10, 0), pady=4
-            )
-
         user_box = ttk.LabelFrame(panel, text="当前登录人", padding=12, style="Card.TLabelframe")
-        user_box.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        user_box.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         user_box.columnconfigure(1, weight=1)
         user_rows = [
             ("用户 ID", "user_id"),
@@ -1015,7 +991,7 @@ class DailyReportApp(tk.Tk):
             )
 
         buttons = ttk.Frame(panel, style="Panel.TFrame")
-        buttons.grid(row=8, column=0, columnspan=2, sticky="e", pady=(16, 0))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="e", pady=(16, 0))
 
         def apply_config_values(config):
             self.base_url_var.set(config["base_url"])
@@ -1027,8 +1003,6 @@ class DailyReportApp(tk.Tk):
             self.dept_id_var.set(config.get("dept_id", ""))
             self.dept_name_var.set(config.get("dept_name", ""))
             self.post_names_var.set(config.get("post_names", ""))
-            self.github_repo_var.set(config.get("github_repo", ""))
-            self.github_asset_var.set(config.get("github_asset_keyword", DEFAULT_UPDATE_ASSET_KEYWORD))
 
         def save_config_from_dialog():
             config = {key: value.get().strip() for key, value in values.items()}
@@ -1502,14 +1476,8 @@ class DailyReportApp(tk.Tk):
         self.after(100, self._drain_queue)
 
     def check_for_updates(self):
-        repo = self.github_repo_var.get().strip()
-        asset_keyword = self.github_asset_var.get().strip() or DEFAULT_UPDATE_ASSET_KEYWORD
-        if not repo or "/" not in repo:
-            self.show_centered_alert(
-                "无法检查更新",
-                "请先在“全局配置”里填写 GitHub 仓库，格式为 owner/repo。",
-            )
-            return
+        repo = GITHUB_UPDATE_REPO
+        asset_keyword = DEFAULT_UPDATE_ASSET_KEYWORD
 
         def work():
             api_url = f"https://api.github.com/repos/{repo}/releases/latest"

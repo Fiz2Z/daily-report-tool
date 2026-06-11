@@ -29,10 +29,7 @@ python .\daily_report_gui.py
 
 ## GitHub 检查更新
 
-顶部 `检查更新` 会读取 GitHub 最新 Release。使用前先在 `全局配置` 里填写：
-
-- `GitHub 仓库`：格式为 `owner/repo`，例如 `yourname/daily-report-tool`。
-- `EXE 关键词`：默认 `日报批量创建工具.exe`，用于匹配 Release 附件里的 exe。
+顶部 `检查更新` 会读取 `Fiz2Z/daily-report-tool` 的 GitHub 最新 Release，并从 Release 附件里下载 `日报批量创建工具.exe`。用户不需要配置 GitHub 仓库。
 
 自动发新版：
 
