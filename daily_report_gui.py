@@ -16,6 +16,14 @@ from pathlib import Path
 from tkinter import ttk
 from urllib import error, parse, request
 
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+except ImportError:
+    pystray = None
+    Image = None
+    ImageDraw = None
+
 
 DEFAULT_BASE_URL = "http://39.100.83.141:81/admin-api"
 DEFAULT_TOKEN = ""
@@ -477,6 +485,9 @@ class DailyReportApp(tk.Tk):
         self.step_frames = []
         self.history_dialog = None
         self.all_reports_dialog = None
+        self.tray_icon = None
+        self.tray_thread = None
+        self.force_exit = False
         self.creation_in_progress = False
         self.app_config = load_app_config()
 
@@ -645,6 +656,10 @@ class DailyReportApp(tk.Tk):
         self._build_settings_step()
         self._build_content_step()
         self.show_step(0)
+
+    def destroy(self):
+        self.stop_tray_icon()
+        super().destroy()
 
     def make_checkbutton(self, parent, text, variable):
         label = tk.Label(
@@ -1506,7 +1521,69 @@ class DailyReportApp(tk.Tk):
         if self.creation_in_progress:
             self.show_centered_alert("正在创建日报", "日报创建过程中请不要关闭软件，等待执行日志提示完成后再关闭。")
             return
+        if self.force_exit:
+            self.destroy()
+            return
+        self.hide_to_tray()
+
+    def hide_to_tray(self):
+        if self.ensure_tray_icon():
+            self.withdraw()
+        else:
+            self.iconify()
+            self.show_centered_alert("已最小化", "当前环境缺少托盘组件，程序已最小化到任务栏。")
+
+    def ensure_tray_icon(self):
+        if pystray is None or Image is None or ImageDraw is None:
+            return False
+        if self.tray_icon is not None:
+            return True
+        image = self.build_tray_image()
+        self.tray_icon = pystray.Icon(
+            "daily_report_tool",
+            image,
+            "日报批量创建工具",
+            menu=pystray.Menu(
+                pystray.MenuItem("显示", lambda icon, item: self.ui_queue.put(("tray_show", None))),
+                pystray.MenuItem("退出", lambda icon, item: self.ui_queue.put(("tray_exit", None))),
+            ),
+        )
+        self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+        self.tray_thread.start()
+        return True
+
+    def build_tray_image(self):
+        image = Image.new("RGBA", (64, 64), (15, 98, 254, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill=(255, 255, 255, 255))
+        draw.rectangle((18, 18, 46, 24), fill=(15, 98, 254, 255))
+        draw.rectangle((18, 30, 46, 36), fill=(15, 98, 254, 255))
+        draw.rectangle((18, 42, 38, 48), fill=(15, 98, 254, 255))
+        return image
+
+    def show_from_tray(self):
+        self.deiconify()
+        self.state("normal")
+        self.lift()
+        self.focus_force()
+
+    def exit_from_tray(self):
+        if self.creation_in_progress:
+            self.show_from_tray()
+            self.show_centered_alert("正在创建日报", "日报创建过程中请不要关闭软件，等待执行日志提示完成后再退出。")
+            return
+        self.force_exit = True
+        self.stop_tray_icon()
         self.destroy()
+
+    def stop_tray_icon(self):
+        icon = self.tray_icon
+        self.tray_icon = None
+        if icon is not None:
+            try:
+                icon.stop()
+            except Exception:
+                pass
 
     def client(self):
         self.api = ApiClient(
@@ -1567,6 +1644,10 @@ class DailyReportApp(tk.Tk):
                     self.handle_update_downloaded(payload)
                 elif kind == "creation_finished":
                     self.after_creation_finished()
+                elif kind == "tray_show":
+                    self.show_from_tray()
+                elif kind == "tray_exit":
+                    self.exit_from_tray()
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
