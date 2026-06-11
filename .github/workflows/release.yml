@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -63,18 +65,33 @@ jobs:
             throw "Packaged exe smoke test failed with code $($process.ExitCode)"
           }
 
-      - name: Generate SHA256
+      - name: Generate package and release notes
         shell: pwsh
         run: |
           Compress-Archive -Path ".\dist\report-tool\*" -DestinationPath ".\dist\report-tool.zip" -Force
           $archive = ".\dist\report-tool.zip"
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
           "sha256: $hash" | Set-Content ".\dist\report-tool.zip.sha256" -Encoding UTF8
-          @"
-          自动打包版本：v$env:APP_VERSION
 
-          sha256: $hash
-          "@ | Set-Content ".\release_notes.md" -Encoding UTF8
+          $currentTag = "v$env:APP_VERSION"
+          $previousTag = git tag --sort=-v:refname | Where-Object { $_ -ne $currentTag } | Select-Object -First 1
+          if ($previousTag) {
+            $commitLines = git log "$previousTag..HEAD" --pretty=format:"- %s"
+          } else {
+            $commitLines = git log -n 20 --pretty=format:"- %s"
+          }
+          if (-not $commitLines) {
+            $commitLines = @("- 本次版本包含构建和依赖更新")
+          }
+
+          $notes = @()
+          $notes += "版本：$currentTag"
+          $notes += ""
+          $notes += "更新内容："
+          $notes += $commitLines
+          $notes += ""
+          $notes += "sha256: $hash"
+          $notes | Set-Content ".\release_notes.md" -Encoding UTF8
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
