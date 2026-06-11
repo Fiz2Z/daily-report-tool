@@ -52,6 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = ".\dist\日报批量创建工具.exe"
+          Get-ChildItem ".\dist" -Recurse -Include "python3.dll","vcruntime*.dll","msvcp*.dll","api-ms-win-crt*.dll" | Select-Object FullName
           $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
           $exited = $process.WaitForExit(15000)
           if (-not $exited) {

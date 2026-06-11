@@ -5,19 +5,30 @@ from pathlib import Path
 
 
 def runtime_binaries():
-    root = Path(sys.base_prefix)
-    names = [
+    roots = [Path(sys.base_prefix), Path(sys.base_prefix) / "DLLs"]
+    exact_names = {
+        "python3.dll",
         "vcruntime140.dll",
         "vcruntime140_1.dll",
         "msvcp140.dll",
         "msvcp140_1.dll",
         "msvcp140_2.dll",
-    ]
+        "concrt140.dll",
+        "vccorlib140.dll",
+    }
+    prefixes = ("api-ms-win-crt", "api-ms-win-core")
     binaries = []
-    for name in names:
-        path = root / name
-        if path.exists():
-            binaries.append((str(path), "."))
+    seen = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.glob("*.dll"):
+            name = path.name.lower()
+            if name in exact_names or any(name.startswith(prefix) for prefix in prefixes):
+                normalized = str(path.resolve())
+                if normalized not in seen:
+                    binaries.append((normalized, "."))
+                    seen.add(normalized)
     return binaries
 
 
@@ -46,7 +57,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
