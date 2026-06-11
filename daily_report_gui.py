@@ -1706,6 +1706,7 @@ set "TARGET={target_path}"
 timeout /t 1 /nobreak >nul
 copy /Y "%SOURCE%" "%TARGET%" >nul
 if errorlevel 1 goto retry
+timeout /t 2 /nobreak >nul
 start "" "%TARGET%"
 del "%SOURCE%" >nul 2>nul
 del "%~f0" >nul 2>nul
