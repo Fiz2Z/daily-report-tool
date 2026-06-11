@@ -51,8 +51,8 @@ jobs:
       - name: Smoke test packaged exe
         shell: pwsh
         run: |
-          $exe = ".\dist\日报批量创建工具.exe"
-          Get-ChildItem ".\dist" -Recurse -Include "python3.dll","vcruntime*.dll","msvcp*.dll","api-ms-win-crt*.dll" | Select-Object FullName
+          $exe = ".\dist\report-tool\report-tool.exe"
+          Get-ChildItem ".\dist\report-tool" -Recurse -Include "python*.dll","vcruntime*.dll","msvcp*.dll","api-ms-win-crt*.dll" | Select-Object FullName
           $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
           $exited = $process.WaitForExit(15000)
           if (-not $exited) {
@@ -66,10 +66,10 @@ jobs:
       - name: Generate SHA256
         shell: pwsh
         run: |
-          Copy-Item ".\dist\日报批量创建工具.exe" ".\dist\report-tool.exe" -Force
-          $exe = ".\dist\report-tool.exe"
-          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          "sha256: $hash" | Set-Content ".\dist\report-tool.exe.sha256" -Encoding UTF8
+          Compress-Archive -Path ".\dist\report-tool\*" -DestinationPath ".\dist\report-tool.zip" -Force
+          $archive = ".\dist\report-tool.zip"
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "sha256: $hash" | Set-Content ".\dist\report-tool.zip.sha256" -Encoding UTF8
           @"
           自动打包版本：v$env:APP_VERSION
 
@@ -85,5 +85,5 @@ jobs:
           make_latest: true
           body_path: release_notes.md
           files: |
-            dist/report-tool.exe
-            dist/report-tool.exe.sha256
+            dist/report-tool.zip
+            dist/report-tool.zip.sha256

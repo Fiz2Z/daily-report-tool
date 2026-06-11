@@ -6,11 +6,13 @@ import os
 import queue
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
 import threading
 import tkinter as tk
+import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 from tkinter import ttk
@@ -31,7 +33,7 @@ DEFAULT_PROJECT_ID = "6"
 DEFAULT_TASK_TYPE = 4
 APP_VERSION = "1.0.0"
 GITHUB_UPDATE_REPO = "Fiz2Z/daily-report-tool"
-DEFAULT_UPDATE_ASSET_KEYWORD = "report-tool.exe"
+DEFAULT_UPDATE_ASSET_KEYWORD = "report-tool.zip"
 
 
 def resolve_app_dir():
@@ -1679,16 +1681,16 @@ class DailyReportApp(tk.Tk):
 
     def find_update_asset(self, assets, asset_keyword):
         keyword = asset_keyword.lower()
-        exe_assets = [
+        zip_assets = [
             asset
             for asset in assets
-            if str(asset.get("name") or "").lower().endswith(".exe")
+            if str(asset.get("name") or "").lower().endswith(".zip")
             and (not keyword or keyword in str(asset.get("name") or "").lower())
         ]
-        if exe_assets:
-            return exe_assets[0]
+        if zip_assets:
+            return zip_assets[0]
         fallback_assets = [
-            asset for asset in assets if str(asset.get("name") or "").lower().endswith(".exe")
+            asset for asset in assets if str(asset.get("name") or "").lower().endswith(".zip")
         ]
         return fallback_assets[0] if fallback_assets else None
 
@@ -1708,7 +1710,7 @@ class DailyReportApp(tk.Tk):
         if not asset:
             self.show_centered_alert(
                 "发现新版本",
-                f"最新版本：{latest_version}\n但 Release 附件里没有匹配的 exe 文件。\n"
+                f"最新版本：{latest_version}\n但 Release 附件里没有匹配的 zip 更新包。\n"
                 f"当前匹配关键词：{payload['asset_keyword']}",
             )
             return
@@ -1732,7 +1734,7 @@ class DailyReportApp(tk.Tk):
             download_url = asset.get("browser_download_url")
             if not download_url:
                 raise RuntimeError("GitHub Release 附件没有下载地址。")
-            file_name = Path(str(asset.get("name") or f"daily-report-tool-{latest_version}.exe")).name
+            file_name = Path(str(asset.get("name") or f"report-tool-{latest_version}.zip")).name
             target_path = APP_DIR / "updates" / latest_version.replace("/", "_") / file_name
             self.queue_log(f"正在下载更新：{file_name}")
             download_url_to_file(download_url, target_path, headers=github_headers(), timeout=120)
@@ -1776,20 +1778,41 @@ class DailyReportApp(tk.Tk):
             self.apply_update_and_restart(update_path)
 
     def apply_update_and_restart(self, update_path):
-        target_path = Path(sys.executable).resolve()
+        target_dir = APP_DIR.parent / "app"
+        staging_dir = APP_DIR / "updates" / "staging"
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(update_path, "r") as archive:
+            archive.extractall(staging_dir)
+        new_exe = staging_dir / "report-tool.exe"
+        if not new_exe.exists():
+            matches = list(staging_dir.rglob("report-tool.exe"))
+            if matches:
+                content_dir = matches[0].parent
+                flattened_dir = APP_DIR / "updates" / "staging_flat"
+                if flattened_dir.exists():
+                    shutil.rmtree(flattened_dir, ignore_errors=True)
+                shutil.copytree(content_dir, flattened_dir)
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                flattened_dir.rename(staging_dir)
+                new_exe = staging_dir / "report-tool.exe"
+        if not new_exe.exists():
+            raise RuntimeError("更新包中没有找到 report-tool.exe。")
         script_path = APP_DIR / "updates" / "apply_update.bat"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script = f"""@echo off
 chcp 65001 >nul
-set "SOURCE={update_path}"
-set "TARGET={target_path}"
+set "SOURCE_DIR={staging_dir}"
+set "TARGET_DIR={target_dir}"
+set "TARGET_EXE={target_dir / 'report-tool.exe'}"
 :retry
 timeout /t 1 /nobreak >nul
-copy /Y "%SOURCE%" "%TARGET%" >nul
-if errorlevel 1 goto retry
+robocopy "%SOURCE_DIR%" "%TARGET_DIR%" /MIR /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 goto retry
 timeout /t 2 /nobreak >nul
-start "" "%TARGET%"
-del "%SOURCE%" >nul 2>nul
+rmdir /S /Q "%SOURCE_DIR%" >nul 2>nul
+start "" "%TARGET_EXE%"
 del "%~f0" >nul 2>nul
 """
         script_path.write_text(script, encoding="utf-8-sig")

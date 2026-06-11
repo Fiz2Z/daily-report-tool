@@ -31,7 +31,7 @@ python .\daily_report_gui.py
 
 ## GitHub 检查更新
 
-顶部 `检查更新` 会读取 `Fiz2Z/daily-report-tool` 的 GitHub 最新 Release，并从 Release 附件里下载 `report-tool.exe`。用户不需要配置 GitHub 仓库。
+顶部 `检查更新` 会读取 `Fiz2Z/daily-report-tool` 的 GitHub 最新 Release，并从 Release 附件里下载 `report-tool.zip`。用户不需要配置 GitHub 仓库。
 
 自动发新版：
 
@@ -44,13 +44,13 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-GitHub Actions 会自动在 Windows 环境打包应用，创建 Release，并上传 `report-tool.exe` 和 sha256 文件。打包时会自动把程序内的 `APP_VERSION` 设置成 tag 版本号。
+GitHub Actions 会自动在 Windows 环境打包应用目录，创建 Release，并上传 `report-tool.zip` 和 sha256 文件。打包时会自动把程序内的 `APP_VERSION` 设置成 tag 版本号。
 
 也可以在 GitHub 页面进入 `Actions`，手动运行 `Build Windows Release`，填写版本号后自动打包发布。
 
 用户点击 `检查更新` 后，程序会比较本地 `APP_VERSION` 和最新 Release Tag。
 
-如果 Release 附件带有 GitHub `digest` 字段，或 Release 描述里写了 `sha256: 文件hash`，程序会自动校验下载文件。exe 运行模式下，下载完成后可自动关闭、替换当前 exe 并重启；脚本运行模式下只下载文件，不覆盖源码。
+如果 Release 附件带有 GitHub `digest` 字段，或 Release 描述里写了 `sha256: 文件hash`，程序会自动校验下载文件。exe 运行模式下，下载完成后会自动关闭，把新版安装到 `%APPDATA%\DailyReportTool\app` 并重启；脚本运行模式下只下载文件，不覆盖源码。
 
 ## 日报条数
 
