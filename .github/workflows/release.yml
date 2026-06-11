@@ -48,6 +48,20 @@ jobs:
       - name: Build exe
         run: pyinstaller ".\日报批量创建工具.spec" --noconfirm
 
+      - name: Smoke test packaged exe
+        shell: pwsh
+        run: |
+          $exe = ".\dist\日报批量创建工具.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru
+          $exited = $process.WaitForExit(15000)
+          if (-not $exited) {
+            Stop-Process -Id $process.Id -Force
+            throw "Packaged exe smoke test did not exit within 15 seconds"
+          }
+          if ($null -ne $process.ExitCode -and $process.ExitCode -ne 0) {
+            throw "Packaged exe smoke test failed with code $($process.ExitCode)"
+          }
+
       - name: Generate SHA256
         shell: pwsh
         run: |

@@ -1,10 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+from pathlib import Path
+
+
+def runtime_binaries():
+    root = Path(sys.base_prefix)
+    names = [
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+    ]
+    binaries = []
+    for name in names:
+        path = root / name
+        if path.exists():
+            binaries.append((str(path), "."))
+    return binaries
+
 
 a = Analysis(
     ['daily_report_gui.py'],
     pathex=[],
-    binaries=[],
+    binaries=runtime_binaries(),
     datas=[],
     hiddenimports=[],
     hookspath=[],

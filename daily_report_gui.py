@@ -2116,4 +2116,8 @@ del "%~f0" >nul 2>nul
 
 if __name__ == "__main__":
     app = DailyReportApp()
+    if "--smoke-test" in sys.argv:
+        app.update_idletasks()
+        app.destroy()
+        sys.exit(0)
     app.mainloop()
