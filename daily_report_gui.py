@@ -477,6 +477,7 @@ class DailyReportApp(tk.Tk):
         self.step_frames = []
         self.history_dialog = None
         self.all_reports_dialog = None
+        self.creation_in_progress = False
         self.app_config = load_app_config()
 
         self.base_url_var = tk.StringVar(value=self.app_config["base_url"])
@@ -509,6 +510,7 @@ class DailyReportApp(tk.Tk):
         self._configure_styles()
         self._build_menu()
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self.on_close_request)
         self.after(100, self._drain_queue)
         self.after(300, self.load_initial_data)
 
@@ -680,7 +682,10 @@ class DailyReportApp(tk.Tk):
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="选择父级需求", style="Header.TLabel").grid(row=0, column=0, sticky="w")
         self.current_user_label = ttk.Label(header, text=self.current_user_text(), style="Muted.Panel.TLabel")
-        self.current_user_label.grid(row=0, column=1, sticky="e")
+        self.current_user_label.grid(row=0, column=1, sticky="e", padx=(12, 10))
+        ttk.Button(header, text="刷新需求", command=self.refresh_requirements, style="Accent.TButton").grid(
+            row=0, column=2, sticky="e"
+        )
         ttk.Label(frame, text="日报会作为该需求下的任务创建。", style="Muted.Panel.TLabel").grid(
             row=1, column=0, sticky="w", pady=(2, 14)
         )
@@ -690,8 +695,7 @@ class DailyReportApp(tk.Tk):
         search.columnconfigure(1, weight=1)
         ttk.Label(search, text="关键词", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Entry(search, textvariable=self.keyword_var).grid(row=0, column=1, sticky="ew", padx=8)
-        ttk.Button(search, text="查询", command=self.load_requirements).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(search, text="刷新", command=self.refresh_requirements).grid(row=0, column=3)
+        ttk.Button(search, text="查询", command=self.load_requirements).grid(row=0, column=2)
 
         self.req_tree = ttk.Treeview(
             frame,
@@ -929,6 +933,11 @@ class DailyReportApp(tk.Tk):
                 label.configure(style="SidebarDone.TLabel")
             else:
                 label.configure(style="SidebarIdle.TLabel")
+        if self.creation_in_progress:
+            self.back_button.configure(state=tk.DISABLED)
+            self.next_button.configure(state=tk.DISABLED)
+            self.execute_button.configure(state=tk.DISABLED)
+            return
         self.back_button.configure(state=tk.NORMAL if self.current_step > 0 else tk.DISABLED)
         if self.current_step == len(self.step_frames) - 1:
             self.next_button.grid_remove()
@@ -1493,6 +1502,12 @@ class DailyReportApp(tk.Tk):
         self.keyword_var.set("")
         self.load_requirements()
 
+    def on_close_request(self):
+        if self.creation_in_progress:
+            self.show_centered_alert("正在创建日报", "日报创建过程中请不要关闭软件，等待执行日志提示完成后再关闭。")
+            return
+        self.destroy()
+
     def client(self):
         self.api = ApiClient(
             self.base_url_var.get(),
@@ -1925,6 +1940,7 @@ del "%~f0" >nul 2>nul
             )
 
     def after_creation_finished(self):
+        self.creation_in_progress = False
         self.generated_rows = []
         self.title_text.delete("1.0", tk.END)
         self.fill_preview()
@@ -2007,6 +2023,8 @@ del "%~f0" >nul 2>nul
         ]
         if not self.ask_centered_confirmation("二次确认", "\n".join(confirm_lines)):
             return
+        self.creation_in_progress = True
+        self.show_step(self.current_step)
 
         def save_history(row, created_id, result, error_message=""):
             record = {
@@ -2033,61 +2051,63 @@ del "%~f0" >nul 2>nul
             append_history_record(record)
 
         def work():
-            api = self.client()
-            for index, row in enumerate(rows, start=1):
-                created_id = None
-                try:
-                    self.queue_log(f"第 {index} 条创建中: {row['title']}")
-                    create_preview = {
-                        "projectId": str(project_id),
-                        "parentId": int(parent_id),
-                        "title": row["title"],
-                        "type": DEFAULT_TASK_TYPE,
-                    }
-                    self.queue_log("新建任务参数: " + json.dumps(create_preview, ensure_ascii=False))
-                    created = api.create_task(project_id, parent_id, row["title"])
-                    created_id = created.get("id") or created.get("instId")
-                    if not created_id:
-                        raise ApiError(f"创建成功但没有返回 id: {created}")
-                    self.queue_log(f"第 {index} 条已创建 ID={created_id}")
+            try:
+                api = self.client()
+                for index, row in enumerate(rows, start=1):
+                    created_id = None
+                    try:
+                        self.queue_log(f"第 {index} 条创建中: {row['title']}")
+                        create_preview = {
+                            "projectId": str(project_id),
+                            "parentId": int(parent_id),
+                            "title": row["title"],
+                            "type": DEFAULT_TASK_TYPE,
+                        }
+                        self.queue_log("新建任务参数: " + json.dumps(create_preview, ensure_ascii=False))
+                        created = api.create_task(project_id, parent_id, row["title"])
+                        created_id = created.get("id") or created.get("instId")
+                        if not created_id:
+                            raise ApiError(f"创建成功但没有返回 id: {created}")
+                        self.queue_log(f"第 {index} 条已创建 ID={created_id}")
 
-                    if options["set_assignee"]:
-                        api.set_assignee(created_id, options["assignee_id"])
-                        self.queue_log(f"ID={created_id} 已设置负责人 {options['assignee_id']}")
-                    if options["set_time"]:
-                        api.set_time_property(created_id, "start", row["start"])
-                        api.set_time_property(created_id, "due", row["due"])
-                        self.queue_log(f"ID={created_id} 已设置时间 {row['start']} ~ {row['due']}")
-                    if options["set_state"]:
-                        api.set_state(created_id, options["state_id"])
-                        self.queue_log(f"ID={created_id} 已设置状态 {options['state_id']}")
-                    if options["set_estimate"]:
-                        api.set_workload(created_id, row["estimate"])
-                        self.queue_log(f"ID={created_id} 已设置预估工时 {row['estimate']}")
-                    if options["register_workload"]:
-                        api.register_workload(
-                            created_id,
-                            row["report"],
-                            row["estimate"],
-                            row["register_date"],
-                        )
-                        self.queue_log(f"ID={created_id} 已登记工时 {row['report']}")
-                    save_history(row, created_id, "成功")
-                except Exception as exc:
-                    prefix = f"第 {index} 条失败"
-                    if created_id:
-                        prefix += f"（已创建 ID={created_id}）"
-                        save_history(row, created_id, "失败", str(exc))
-                    self.queue_log(f"[失败] {prefix}: {exc}")
-                    if not options["continue_on_error"]:
-                        raise
-                if index < len(rows):
-                    wait_seconds = random.randint(options["interval_min"], options["interval_max"])
-                    if wait_seconds > 0:
-                        self.queue_log(f"等待 {wait_seconds} 秒后创建下一条，请不要关闭软件。")
-                        time.sleep(wait_seconds)
-            self.queue_log("全部处理完成")
-            self.ui_queue.put(("creation_finished", None))
+                        if options["set_assignee"]:
+                            api.set_assignee(created_id, options["assignee_id"])
+                            self.queue_log(f"ID={created_id} 已设置负责人 {options['assignee_id']}")
+                        if options["set_time"]:
+                            api.set_time_property(created_id, "start", row["start"])
+                            api.set_time_property(created_id, "due", row["due"])
+                            self.queue_log(f"ID={created_id} 已设置时间 {row['start']} ~ {row['due']}")
+                        if options["set_state"]:
+                            api.set_state(created_id, options["state_id"])
+                            self.queue_log(f"ID={created_id} 已设置状态 {options['state_id']}")
+                        if options["set_estimate"]:
+                            api.set_workload(created_id, row["estimate"])
+                            self.queue_log(f"ID={created_id} 已设置预估工时 {row['estimate']}")
+                        if options["register_workload"]:
+                            api.register_workload(
+                                created_id,
+                                row["report"],
+                                row["estimate"],
+                                row["register_date"],
+                            )
+                            self.queue_log(f"ID={created_id} 已登记工时 {row['report']}")
+                        save_history(row, created_id, "成功")
+                    except Exception as exc:
+                        prefix = f"第 {index} 条失败"
+                        if created_id:
+                            prefix += f"（已创建 ID={created_id}）"
+                            save_history(row, created_id, "失败", str(exc))
+                        self.queue_log(f"[失败] {prefix}: {exc}")
+                        if not options["continue_on_error"]:
+                            raise
+                    if index < len(rows):
+                        wait_seconds = random.randint(options["interval_min"], options["interval_max"])
+                        if wait_seconds > 0:
+                            self.queue_log(f"等待 {wait_seconds} 秒后创建下一条，请不要关闭软件。")
+                            time.sleep(wait_seconds)
+                self.queue_log("全部处理完成")
+            finally:
+                self.ui_queue.put(("creation_finished", None))
 
         self.append_log("创建任务已开始，创建过程中请不要关闭软件。")
         self.run_worker("执行创建", work)
