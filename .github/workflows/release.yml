@@ -1,0 +1,73 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.0.1"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Set app version from release version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          }
+          if (-not ($version -match '^\d+\.\d+\.\d+')) {
+            throw "Version must look like 1.0.1"
+          }
+          $source = Get-Content .\daily_report_gui.py -Raw
+          $source = $source -replace 'APP_VERSION = ".*?"', "APP_VERSION = `"$version`""
+          Set-Content .\daily_report_gui.py -Value $source -Encoding UTF8
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build exe
+        run: pyinstaller ".\日报批量创建工具.spec" --noconfirm
+
+      - name: Generate SHA256
+        shell: pwsh
+        run: |
+          $exe = ".\dist\日报批量创建工具.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "sha256: $hash" | Set-Content ".\dist\日报批量创建工具.exe.sha256" -Encoding UTF8
+          @"
+          自动打包版本：v$env:APP_VERSION
+
+          sha256: $hash
+          "@ | Set-Content ".\release_notes.md" -Encoding UTF8
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}
+          name: 日报批量创建工具 v${{ env.APP_VERSION }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body_path: release_notes.md
+          files: |
+            dist/日报批量创建工具.exe
+            dist/日报批量创建工具.exe.sha256
