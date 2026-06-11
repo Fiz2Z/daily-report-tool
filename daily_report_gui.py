@@ -167,15 +167,22 @@ def request_json(url, headers=None, timeout=20):
     return json.loads(raw)
 
 
-def download_url_to_file(url, target_path, headers=None, timeout=60):
+def download_url_to_file(url, target_path, headers=None, timeout=60, progress_callback=None):
     req = request.Request(url, headers=headers or {}, method="GET")
     target_path.parent.mkdir(parents=True, exist_ok=True)
     with request.urlopen(req, timeout=timeout) as resp, target_path.open("wb") as file:
+        total = int(resp.headers.get("Content-Length") or 0)
+        downloaded = 0
+        if progress_callback:
+            progress_callback(downloaded, total)
         while True:
             chunk = resp.read(1024 * 256)
             if not chunk:
                 break
             file.write(chunk)
+            downloaded += len(chunk)
+            if progress_callback:
+                progress_callback(downloaded, total)
 
 
 def sha256_file(path):
@@ -487,6 +494,9 @@ class DailyReportApp(tk.Tk):
         self.step_frames = []
         self.history_dialog = None
         self.all_reports_dialog = None
+        self.update_progress_dialog = None
+        self.update_progress_var = None
+        self.update_progress_text_var = None
         self.tray_icon = None
         self.tray_thread = None
         self.force_exit = False
@@ -618,6 +628,7 @@ class DailyReportApp(tk.Tk):
         menu_bar.add_command(label="全部日报", command=self.open_all_reports_dialog)
         menu_bar.add_command(label="历史记录", command=self.open_history_dialog)
         menu_bar.add_command(label="检查更新", command=self.check_for_updates)
+        menu_bar.add_command(label="关于", command=self.open_about_dialog)
         self.config(menu=menu_bar)
 
     def _build_ui(self):
@@ -1468,6 +1479,71 @@ class DailyReportApp(tk.Tk):
         self.center_dialog(dialog)
         dialog.wait_window()
 
+    def open_about_dialog(self):
+        package_type = "目录版 zip" if getattr(sys, "frozen", False) else "源码运行"
+        message = (
+            f"当前版本：{APP_VERSION}\n"
+            f"运行方式：{package_type}\n\n"
+            "日报批量创建工具"
+        )
+        self.show_centered_alert("关于", message)
+
+    def show_update_progress_dialog(self, file_name):
+        if self.update_progress_dialog is not None and self.update_progress_dialog.winfo_exists():
+            return
+        dialog = tk.Toplevel(self)
+        self.update_progress_dialog = dialog
+        self.update_progress_var = tk.DoubleVar(value=0)
+        self.update_progress_text_var = tk.StringVar(value=f"准备下载：{file_name}")
+        dialog.title("下载更新")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.configure(bg=self.colors["bg"])
+
+        panel = ttk.Frame(dialog, padding=18, style="Panel.TFrame")
+        panel.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(panel, text="正在下载更新", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(
+            panel,
+            textvariable=self.update_progress_text_var,
+            style="Panel.TLabel",
+            wraplength=560,
+        ).pack(anchor="w", pady=(14, 10))
+        progress = ttk.Progressbar(panel, variable=self.update_progress_var, maximum=100, length=520)
+        progress.pack(fill=tk.X)
+        ttk.Label(panel, text="下载过程中请不要关闭软件。", style="Muted.Panel.TLabel").pack(anchor="w", pady=(10, 0))
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.center_dialog(dialog)
+
+    def update_download_progress(self, downloaded, total):
+        if self.update_progress_dialog is None or not self.update_progress_dialog.winfo_exists():
+            return
+        if total > 0:
+            percent = min(downloaded * 100 / total, 100)
+            self.update_progress_var.set(percent)
+            self.update_progress_text_var.set(
+                f"已下载 {self.format_bytes(downloaded)} / {self.format_bytes(total)}（{percent:.0f}%）"
+            )
+        else:
+            self.update_progress_var.set(0)
+            self.update_progress_text_var.set(f"已下载 {self.format_bytes(downloaded)}")
+
+    def close_update_progress_dialog(self):
+        dialog = self.update_progress_dialog
+        self.update_progress_dialog = None
+        self.update_progress_var = None
+        self.update_progress_text_var = None
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+
+    @staticmethod
+    def format_bytes(value):
+        size = float(value or 0)
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
+            size /= 1024
+
     def center_dialog(self, dialog):
         dialog.update_idletasks()
         self.update_idletasks()
@@ -1546,6 +1622,12 @@ class DailyReportApp(tk.Tk):
             image,
             "日报批量创建工具",
             menu=pystray.Menu(
+                pystray.MenuItem(
+                    "显示",
+                    lambda icon, item: self.ui_queue.put(("tray_show", None)),
+                    default=True,
+                    visible=False,
+                ),
                 pystray.MenuItem("显示", lambda icon, item: self.ui_queue.put(("tray_show", None))),
                 pystray.MenuItem("退出", lambda icon, item: self.ui_queue.put(("tray_exit", None))),
             ),
@@ -1650,6 +1732,10 @@ class DailyReportApp(tk.Tk):
                     self.show_from_tray()
                 elif kind == "tray_exit":
                     self.exit_from_tray()
+                elif kind == "download_progress":
+                    self.update_download_progress(*payload)
+                elif kind == "download_progress_close":
+                    self.close_update_progress_dialog()
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
@@ -1731,33 +1817,44 @@ class DailyReportApp(tk.Tk):
 
     def download_update(self, release, asset, latest_version):
         def work():
-            download_url = asset.get("browser_download_url")
-            if not download_url:
-                raise RuntimeError("GitHub Release 附件没有下载地址。")
-            file_name = Path(str(asset.get("name") or f"report-tool-{latest_version}.zip")).name
-            target_path = APP_DIR / "updates" / latest_version.replace("/", "_") / file_name
-            self.queue_log(f"正在下载更新：{file_name}")
-            download_url_to_file(download_url, target_path, headers=github_headers(), timeout=120)
-            expected_sha256 = extract_asset_sha256(asset, str(release.get("body") or ""))
-            if expected_sha256:
-                actual_sha256 = sha256_file(target_path)
-                if actual_sha256.lower() != expected_sha256.lower():
-                    try:
-                        target_path.unlink()
-                    except OSError:
-                        pass
-                    raise RuntimeError("更新文件校验失败，已删除下载文件。")
-            self.ui_queue.put(
-                (
-                    "update_downloaded",
-                    {
-                        "path": str(target_path),
-                        "version": latest_version,
-                        "sha256_checked": bool(expected_sha256),
-                    },
+            downloaded_payload = None
+            try:
+                download_url = asset.get("browser_download_url")
+                if not download_url:
+                    raise RuntimeError("GitHub Release 附件没有下载地址。")
+                file_name = Path(str(asset.get("name") or f"report-tool-{latest_version}.zip")).name
+                target_path = APP_DIR / "updates" / latest_version.replace("/", "_") / file_name
+                self.queue_log(f"正在下载更新：{file_name}")
+                self.ui_queue.put(("download_progress", (0, 0)))
+                download_url_to_file(
+                    download_url,
+                    target_path,
+                    headers=github_headers(),
+                    timeout=120,
+                    progress_callback=lambda downloaded, total: self.ui_queue.put(
+                        ("download_progress", (downloaded, total))
+                    ),
                 )
-            )
+                expected_sha256 = extract_asset_sha256(asset, str(release.get("body") or ""))
+                if expected_sha256:
+                    actual_sha256 = sha256_file(target_path)
+                    if actual_sha256.lower() != expected_sha256.lower():
+                        try:
+                            target_path.unlink()
+                        except OSError:
+                            pass
+                        raise RuntimeError("更新文件校验失败，已删除下载文件。")
+                downloaded_payload = {
+                    "path": str(target_path),
+                    "version": latest_version,
+                    "sha256_checked": bool(expected_sha256),
+                }
+            finally:
+                self.ui_queue.put(("download_progress_close", None))
+            if downloaded_payload:
+                self.ui_queue.put(("update_downloaded", downloaded_payload))
 
+        self.show_update_progress_dialog(str(asset.get("name") or f"report-tool-{latest_version}.zip"))
         self.run_worker("下载更新", work)
 
     def handle_update_downloaded(self, payload):
