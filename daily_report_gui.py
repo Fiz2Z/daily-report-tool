@@ -34,6 +34,7 @@ DEFAULT_TASK_TYPE = 4
 APP_VERSION = "1.0.0"
 GITHUB_UPDATE_REPO = "Fiz2Z/daily-report-tool"
 DEFAULT_UPDATE_ASSET_KEYWORD = "report-tool.zip"
+GITHUB_PROXY_PREFIX = "https://gh-proxy.org/"
 
 
 def resolve_app_dir():
@@ -183,6 +184,54 @@ def download_url_to_file(url, target_path, headers=None, timeout=60, progress_ca
             downloaded += len(chunk)
             if progress_callback:
                 progress_callback(downloaded, total)
+
+
+def github_proxy_url(url):
+    text = str(url or "").strip()
+    if not text or text.startswith(GITHUB_PROXY_PREFIX):
+        return text
+    if text.startswith(("https://github.com/", "https://api.github.com/")):
+        return GITHUB_PROXY_PREFIX + text
+    return text
+
+
+def request_json_with_github_proxy(url, headers=None, timeout=20):
+    try:
+        return request_json(url, headers=headers, timeout=timeout)
+    except Exception:
+        proxy_url = github_proxy_url(url)
+        if proxy_url == url:
+            raise
+        return request_json(proxy_url, headers=headers, timeout=timeout)
+
+
+def download_github_asset(url, target_path, headers=None, timeout=120, progress_callback=None):
+    candidates = []
+    proxy_url = github_proxy_url(url)
+    if proxy_url != url:
+        candidates.append(proxy_url)
+    candidates.append(url)
+
+    last_error = None
+    for current_url in candidates:
+        try:
+            if progress_callback:
+                progress_callback(0, 0)
+            download_url_to_file(
+                current_url,
+                target_path,
+                headers=headers,
+                timeout=timeout,
+                progress_callback=progress_callback,
+            )
+            return current_url
+        except Exception as exc:
+            last_error = exc
+            try:
+                target_path.unlink()
+            except OSError:
+                pass
+    raise last_error
 
 
 def sha256_file(path):
@@ -1746,7 +1795,7 @@ class DailyReportApp(tk.Tk):
 
         def work():
             api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-            release = request_json(api_url, headers=github_headers(), timeout=20)
+            release = request_json_with_github_proxy(api_url, headers=github_headers(), timeout=20)
             latest_version = str(release.get("tag_name") or release.get("name") or "").strip()
             assets = release.get("assets") or []
             asset = self.find_update_asset(assets, asset_keyword)
@@ -1826,7 +1875,7 @@ class DailyReportApp(tk.Tk):
                 target_path = APP_DIR / "updates" / latest_version.replace("/", "_") / file_name
                 self.queue_log(f"正在下载更新：{file_name}")
                 self.ui_queue.put(("download_progress", (0, 0)))
-                download_url_to_file(
+                used_url = download_github_asset(
                     download_url,
                     target_path,
                     headers=github_headers(),
@@ -1835,6 +1884,8 @@ class DailyReportApp(tk.Tk):
                         ("download_progress", (downloaded, total))
                     ),
                 )
+                if used_url != download_url:
+                    self.queue_log("已通过 GitHub 代理下载更新。")
                 expected_sha256 = extract_asset_sha256(asset, str(release.get("body") or ""))
                 if expected_sha256:
                     actual_sha256 = sha256_file(target_path)
